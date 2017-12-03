@@ -2,10 +2,13 @@
 # Copyright 2007-2013 Gentoo Foundation
 # Copyright 2007-2013 Mike Frysinger <vapier@gentoo.org>
 # Copyright 2014-2015 Natanael Copa <ncopa@alpinelinux.org>
+# Copyright 2017 Yuri Konotopov <ykonotopov@gnome.org>
 # Distributed under the terms of the GNU General Public License v2
 
 argv0=${0##*/}
 version=1.26
+
+BINARY_PREFIX=arm-linux-androideabi-
 
 : ${ROOT:=/}
 
@@ -40,35 +43,9 @@ error() {
 	return 1
 }
 
-# functions for scanelf backend
-elf_rpath_scanelf() {
-	scanelf -qF '#F%r' "$@"
-}
-
-elf_interp_scanelf() {
-	scanelf -qF '#F%i' "$@"
-}
-
-elf_needed_scanelf() {
-	scanelf -qF '#F%n' "$@"
-}
-
-elf_specs_scanelf() {
-	# %a = machine (EM) type
-	# %M = EI class
-	# %D = endian
-	# %I = osabi
-
-	# With glibc, the NONE, SYSV, GNU, and LINUX OSABI's are compatible.
-	# LINUX and GNU are the same thing, as are NONE and SYSV, so normalize
-	# GNU & LINUX to NONE. #442024 #464380
-	scanelf -BF '#F%a %M %D %I' "$1" | \
-		sed -r 's: (LINUX|GNU)$: NONE:'
-}
-
 # functions for binutils backend
 elf_rpath_binutils() {
-	objdump -x "$@" | awk '$1 == "RUNPATH" { if($2!="") {runpath=$2;} }  $1 == "RPATH" { if($2!="") {rpath=$2;} } END { if(runpath!="") {print runpath;} else {print rpath;} }'
+	${BINARY_PREFIX}objdump -x "$@" | awk '$1 == "RUNPATH" { if($2!="") {runpath=$2;} }  $1 == "RPATH" { if($2!="") {rpath=$2;} } END { if(runpath!="") {print runpath;} else {print rpath;} }'
 }
 
 elf_interp_binutils() {
@@ -77,17 +54,17 @@ elf_interp_binutils() {
 	# String dump of section '.interp':
 	#  [     0]  /lib/ld-musl-x86_64.so.1
 	#
-	readelf  -p .interp "$1" | sed -E -n '/\[\s*[0-9]\]/s/^\s*\[.*\]\s*(.*)/\1/p'
+	${BINARY_PREFIX}readelf  -p .interp "$1" | sed -E -n '/\[\s*[0-9]\]/s/^\s*\[.*\]\s*(.*)/\1/p'
 }
 
 elf_needed_binutils() {
-	objdump -x "$@" | awk '$1 == "NEEDED" { line=line sep $2 ; sep="," } END { print line }'
+	${BINARY_PREFIX}objdump -x "$@" | awk '$1 == "NEEDED" { line=line sep $2 ; sep="," } END { print line }'
 }
 
 elf_specs_binutils() {
 	# get Class, Data, Machine and OS/ABI.
 	# the OS/ABI 'GNU', 'System V' and 'Linux' are compatible so normalize
-	readelf -h "$1" \
+	${BINARY_PREFIX}readelf -h "$1" \
 		| awk -F: '$1 ~ /Class|Data|Machine|OS.ABI/ {gsub(/^ +/, "", $2); print $2}' \
 		| sed -E -e 's/UNIX - (System V|Linux|GNU)/UNIX/' \
 		| tr '\n' ' '
@@ -312,14 +289,19 @@ done
 shift $(( $OPTIND - 1))
 [ -z "$1" ] && usage 1
 
+if [ -z "${ANDROID_BUILD_TOP}" ]; then
+	error "This tool requires android build environment"
+	exit 1
+fi
+
+PATH=${PATH}:${ANDROID_BUILD_TOP}/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin
+
 ${SET_X} && set -x
 
-if which scanelf >/dev/null 2>&1; then
-	BACKEND=scanelf
-elif which objdump >/dev/null 2>&1 && which readelf >/dev/null 2>&1; then
+if which ${BINARY_PREFIX}objdump >/dev/null 2>&1 && which ${BINARY_PREFIX}readelf >/dev/null 2>&1; then
 	BACKEND=binutils
 else
-	error "This tool needs either scanelf or binutils (objdump and readelf)"
+	error "This tool needs binutils for arm (objdump and readelf)"
 	exit 1
 fi
 
@@ -347,4 +329,3 @@ for elf ; do
 	fi
 done
 exit ${ret}
-
